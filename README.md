@@ -1,4 +1,4 @@
-# 3d-Printing-Offgassing-Montir
+# 3d-Printing-Offgassing-Montor
 Hello there world! This is a project to implement an air particulate sensor and display the values gotten from that on an OLED.
 
 3d printing offgasses some perfectly fine compounds, some not so fine compounds such as benzene. This project intends to eventually sort out how much of various compounds are being offgassed and display that information to the users.
