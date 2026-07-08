@@ -1,0 +1,24 @@
+[package]
+name = "emmissions_tracker"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", features = [
+  "platform-cortex-m",
+  "executor-thread",
+  "defmt",
+  "embassy-time-driver",
+] }
+defmt-rtt = "1.2.0"
+panic-probe = { version = "1.0.0" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy"}
+embassy-rp = { git = "https://github.com/embassy-rs/embassy",  features = [
+  "defmt",
+  "time-driver",
+  "critical-section-impl",
+  "rp235xa",
+  "binary-info",
+] }
+cortex-m = { version = "0.7.6" }
+cortex-m-rt = "0.7.0"

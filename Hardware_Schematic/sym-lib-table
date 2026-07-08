@@ -1,4 +1,0 @@
-(sym_lib_table
-	(version 7)
-	(lib (name "Hardware_Schematic-eagle-import") (type "KiCad") (uri "${KIPRJMOD}/Hardware_Schematic-eagle-import.kicad_sym") (options "") (descr ""))
-)

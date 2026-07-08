@@ -1,8 +1,0 @@
-
-16LF15375 Memory Summary:
-    Program space        used   B07h (  2823) of  2000h words   ( 34.5%)
-    Data space           used    BEh (   190) of   400h bytes   ( 18.6%)
-    EEPROM space         None available
-    Configuration bits   used     5h (     5) of     5h words   (100.0%)
-    ID Location space    used     0h (     0) of     4h bytes   (  0.0%)
-
