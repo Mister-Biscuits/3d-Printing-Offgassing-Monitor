@@ -2,10 +2,13 @@
 #![no_main]
 use embassy_executor::Spawner;
 use embassy_rp::block::ImageDef;
+use embassy_rp::pio_programs::spi;
 use embassy_rp::uart::{Uart, Config};
 use embassy_rp::uart::Blocking as UartBlocking;
 use embassy_rp::i2c::{self, I2c, Instance};
 use embassy_rp::i2c::Blocking as I2cBlocking;
+use embassy_rp::spi::{Spi,Config};
+use embassy_rp::spi::Blocking as SpiBlocking;
 use core::fmt::Write;
 use embassy_time::Timer;
 use {defmt_rtt as _, panic_probe as _};
@@ -42,6 +45,7 @@ async fn sgp30_init<T: Instance>(sensor: &mut I2c<'_, T, I2cBlocking>) {
 async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
     let mut sgp30_sensor = i2c::I2c::new_blocking(p.I2C0, p.PIN_5, p.PIN_4, i2c::Config::default());
+    let mut tft_display = spi::Spi::new_blocking(p.SPI0,sm,p.PIN_18,p.PIN_19,p.PIN_20,spi::Config::default());
     let mut uarbest = Uart::new_blocking(p.UART0, p.PIN_0, p.PIN_1, Config::default());
     let mut writer = UartWriter(&mut uarbest);
     let mut read_buf = [0u8; 6];
@@ -57,7 +61,7 @@ async fn main(_spawner: Spawner) {
         let co2 = u16::from_be_bytes([read_buf[0], read_buf[1]]);
         let voc = u16::from_be_bytes([read_buf[3], read_buf[4]]);
 
-        Timer::after_millis(988).await;
+        Timer::after_millis(2000).await;
 
         write!(writer, "Co2 reading: {}\r\n", co2).unwrap();
         write!(writer, "VoC reading: {}\r\n", voc).unwrap();
