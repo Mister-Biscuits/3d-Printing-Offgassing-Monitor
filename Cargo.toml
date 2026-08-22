@@ -22,3 +22,9 @@ embassy-rp = { git = "https://github.com/embassy-rs/embassy",  features = [
 ] }
 cortex-m = { version = "0.7.6" }
 cortex-m-rt = "0.7.0"
+mipidsi = "0.10.0"
+embedded-hal-bus = "0.3.0"
+embedded-graphics = "0.8.2"
+defmt = "1.1.1"
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --chip RP2350"
