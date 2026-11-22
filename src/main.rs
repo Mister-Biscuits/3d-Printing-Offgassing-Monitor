@@ -20,6 +20,7 @@ use mipidsi::options::ColorOrder;
 use core::fmt::Write;
 use embassy_time::Delay;
 use embassy_time::Timer;
+use embassy_time::{Duration, Instant, Ticker};
 use {defmt_rtt as _, panic_probe as _};
 use defmt::info;
 mod graph;
@@ -53,6 +54,34 @@ async fn sgp30_init<T: Instance>(sensor: &mut I2c<'_, T, I2cBlocking>) {
     Timer::after_millis(10).await;
 }
 
+// Measure_IAQ (0x2008): returns CO2-equivalent (ppm) then TVOC (ppb).
+// Datasheet max conversion time is 12ms; the SGP30's dynamic baseline
+// compensation algorithm requires this to be triggered at exactly 1Hz, so
+// the caller is responsible for pacing calls to this, not just the delay below.
+async fn sgp30_measure_iaq<T: Instance>(sensor: &mut I2c<'_, T, I2cBlocking>) -> (u16, u16) {
+    sensor.blocking_write(0x58u16, &[0x20, 0x08]).unwrap();
+    Timer::after_millis(15).await;
+    let mut buf = [0u8; 6];
+    sensor.blocking_read(0x58u16, &mut buf).unwrap();
+    let co2 = u16::from_be_bytes([buf[0], buf[1]]);
+    let voc = u16::from_be_bytes([buf[3], buf[4]]);
+    (co2, voc)
+}
+
+// Measure_raw_signals (0x2050): returns raw H2 signal then raw Ethanol signal.
+// Datasheet max conversion time is 25ms; unlike Measure_IAQ this has no
+// baseline-compensation timing requirement, so it can be called as fast as
+// the conversion time allows.
+async fn sgp30_measure_raw<T: Instance>(sensor: &mut I2c<'_, T, I2cBlocking>) -> (u16, u16) {
+    sensor.blocking_write(0x58u16, &[0x20, 0x50]).unwrap();
+    Timer::after_millis(30).await;
+    let mut buf = [0u8; 6];
+    sensor.blocking_read(0x58u16, &mut buf).unwrap();
+    let h2 = u16::from_be_bytes([buf[0], buf[1]]);
+    let ethanol = u16::from_be_bytes([buf[3], buf[4]]);
+    (h2, ethanol)
+}
+
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
@@ -66,7 +95,6 @@ async fn main(_spawner: Spawner) {
     //Uart Related
     let mut uarbest = Uart::new_blocking(p.UART1, p.PIN_26, p.PIN_27, Config::default());
     let mut writer = UartWriter(&mut uarbest);
-    let mut read_buf = [0u8; 6];
 
     
     //SPI related
@@ -86,44 +114,63 @@ async fn main(_spawner: Spawner) {
     let mut buffer_spi = [0u8;512];
     let di = SpiInterface::new(spi_dev, data_select_pin, &mut buffer_spi);
 
-    let mut display = Builder::new(ILI9341Rgb565, di)
+    write!(writer, "Display init starting\r\n").unwrap();
+
+    let mut display = match Builder::new(ILI9341Rgb565, di)
         .display_size(240, 320)
         .color_order(ColorOrder::Bgr)
         .reset_pin(reset_pin)
         .init(&mut Delay)
-        .unwrap();
-
-    let mut graph = ShortGraph::new();
+    {
+        Ok(d) => {
+            write!(writer, "Display init OK\r\n").unwrap();
+            d
+        }
+        Err(e) => {
+            // Blink the onboard LED fast forever so a failure is visible even
+            // without a UART terminal attached, and report the error over UART.
+            write!(writer, "Display init FAILED: {:?}\r\n", e).ok();
+            loop {
+                led.set_high();
+                Timer::after_millis(100).await;
+                led.set_low();
+                Timer::after_millis(100).await;
+            }
+        }
+    };
 
     display.clear(Rgb565::RED).unwrap();
-    
+    backlight_level.set_high();
 
     sgp30_init(&mut sgp30_sensor).await;
     write!(writer, "Program Start\r\n").unwrap();
 
+    // Display updates are parked for now (see ongoing display debugging) --
+    // a single full-screen SPI clear costs hundreds of ms, which alone blows
+    // the 50ms budget below many times over.
+
+    const RAW_PERIOD_MS: u64 = 50; // 20Hz, within the SGP30's ~25ms raw conversion limit
+    const IAQ_EVERY_N_TICKS: u32 = (1000 / RAW_PERIOD_MS) as u32; // Measure_IAQ stays pinned to 1Hz
+
+    let mut ticker = Ticker::every(Duration::from_millis(RAW_PERIOD_MS));
+    let mut tick: u32 = 0;
+
     loop {
-        led.set_low();
-        backlight_level.set_high();
-        display.clear(Rgb565::RED).unwrap();
-        sgp30_sensor.blocking_write(0x58u16, &[0x20, 0x08]).unwrap();
-        
-        Timer::after_millis(500).await;
-        sgp30_sensor.blocking_read(0x58u16, &mut read_buf).unwrap();
-        
-        Timer::after_millis(500).await;
-        display.clear(Rgb565::GREEN).unwrap();
-        
-        let co2 = u16::from_be_bytes([read_buf[0], read_buf[1]]);
-        let voc = u16::from_be_bytes([read_buf[3], read_buf[4]]);
+        ticker.next().await;
+        led.toggle();
 
-        graph.push(co2,voc);
-        graph.draw(&mut display).unwrap();
-        Timer::after_millis(500).await;
+        let (h2, ethanol) = sgp30_measure_raw(&mut sgp30_sensor).await;
+        let raw_t = Instant::now().as_millis() as f64 / 1000.0;
+        write!(writer, "H2,{:.3},{}\r\n", raw_t, h2).unwrap();
+        write!(writer, "ETH,{:.3},{}\r\n", raw_t, ethanol).unwrap();
 
-        //info!("Loop Tick");
-        write!(writer, "Co2 reading: {}\r\n", co2).unwrap();
-        write!(writer, "VoC reading: {}\r\n", voc).unwrap();
-        
-        display.clear(Rgb565::BLUE).unwrap();
+        if tick % IAQ_EVERY_N_TICKS == 0 {
+            let (co2, voc) = sgp30_measure_iaq(&mut sgp30_sensor).await;
+            let iaq_t = Instant::now().as_millis() as f64 / 1000.0;
+            write!(writer, "CO2,{:.3},{}\r\n", iaq_t, co2).unwrap();
+            write!(writer, "TVOC,{:.3},{}\r\n", iaq_t, voc).unwrap();
+        }
+
+        tick = tick.wrapping_add(1);
     }
 }
